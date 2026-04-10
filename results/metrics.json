@@ -1,0 +1,17 @@
+{
+  "total_return": 0.330422656783226,
+  "annualized_return": 0.21211497395459955,
+  "sharpe_ratio": 1.4037328846746733,
+  "sortino_ratio": 2.064230558444546,
+  "max_drawdown": -0.10465375108770582,
+  "calmar_ratio": 2.0268262890723823,
+  "win_rate": 0.5508021390374331,
+  "annualized_volatility": 0.11315997792181581,
+  "alpha": 0.002735556913890047,
+  "beta": 0.875497130020182,
+  "n_trading_days": 374,
+  "benchmark_total_return": 0.3653519127324767,
+  "benchmark_annualized_return": 0.23346655886445333,
+  "benchmark_sharpe": 1.448628205307123,
+  "benchmark_max_drawdown": -0.09974318949003447
+}
