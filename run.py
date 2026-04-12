@@ -17,7 +17,7 @@ from backtest import run_backtest, generate_plots, save_metrics, print_results
 
 def main():
     print("=" * 72)
-    print("  🚀 DEEP RL PORTFOLIO OPTIMIZATION")
+    print("   DEEP RL PORTFOLIO OPTIMIZATION")
     print("  LSTM-PPO | 50 Equities | Sharpe Ratio Objective")
     print("=" * 72)
     print()
@@ -63,8 +63,8 @@ def main():
     save_metrics(backtest_result["metrics"], config.RESULTS_DIR)
 
     total_time = time.time() - overall_start
-    print(f"\n✅ Pipeline complete in {total_time:.1f}s")
-    print(f"📂 Results saved to: {config.RESULTS_DIR}/")
+    print(f"\n Pipeline complete in {total_time:.1f}s")
+    print(f" Results saved to: {config.RESULTS_DIR}/")
     print(f"   • cumulative_returns.png")
     print(f"   • drawdown.png")
     print(f"   • rolling_sharpe.png")
