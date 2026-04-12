@@ -24,7 +24,7 @@ def main():
 
     overall_start = time.time()
 
-    # ─── Step 1: Data ────────────────────────────────────────────────────────
+    #  Step 1: Data 
     print("━" * 72)
     print("  STEP 1: DATA PIPELINE")
     print("━" * 72)
@@ -39,14 +39,14 @@ def main():
     ) = prepare_data()
     print()
 
-    # ─── Step 2: Training ────────────────────────────────────────────────────
+    # Step 2: Training
     print("━" * 72)
     print("  STEP 2: PPO TRAINING")
     print("━" * 72)
     agent = train(train_features, train_prices)
     print()
 
-    # ─── Step 3: Backtesting ─────────────────────────────────────────────────
+    # Step 3: Backtesting
     print("━" * 72)
     print("  STEP 3: BACKTESTING ON HELD-OUT DATA")
     print("━" * 72)
@@ -55,7 +55,7 @@ def main():
     # Print results
     print_results(backtest_result["metrics"])
 
-    # ─── Step 4: Generate Report ─────────────────────────────────────────────
+    # Step 4: Generate Report
     print("━" * 72)
     print("  STEP 4: GENERATING REPORT & VISUALIZATIONS")
     print("━" * 72)
