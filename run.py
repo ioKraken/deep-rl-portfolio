@@ -1,16 +1,3 @@
-"""
-Deep RL Portfolio Optimization — Full Pipeline
-
-Runs the complete pipeline:
-  1. Download & preprocess data for 50+ equities
-  2. Train PPO agent with LSTM actor-critic
-  3. Backtest on held-out test data
-  4. Generate performance report with visualizations
-
-Usage:
-    python run.py
-"""
-
 import sys
 import os
 import time
