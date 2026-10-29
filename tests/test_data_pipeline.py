@@ -137,3 +137,42 @@ def test_load_prices_csv_filters_dates_and_validates(tmp_path):
     p.drop(columns=[config.TICKERS[0]]).to_csv(path)
     with pytest.raises(RuntimeError, match=config.TICKERS[0]):
         dp.load_prices_csv(str(path))
+
+
+class _Resp:
+    def __init__(self, payload, status=200):
+        self._p, self.status_code = payload, status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise dp.requests.HTTPError(str(self.status_code))
+
+    def json(self):
+        return self._p
+
+
+def _chart_payload(ticker, prices):
+    s = prices[ticker]
+    return {"chart": {"result": [{
+        "meta": {"gmtoffset": -18000},
+        "timestamp": [int(t.timestamp()) + 14 * 3600 + 18000 * 0 for t in s.index],
+        "indicators": {"adjclose": [{"adjclose": list(s.values)}]},
+    }]}}
+
+
+def test_chart_api_fallback_when_yfinance_returns_nothing(monkeypatch, fast_retries):
+    prices = _prices()
+    monkeypatch.setattr(dp.yf, "download", _fake_yf(prices, fail_first_n_calls=10**6))
+    monkeypatch.setattr(dp.requests, "get",
+                        lambda url, **kw: _Resp(_chart_payload(url.rsplit("/", 1)[1], prices)))
+    out = dp.download_data()
+    assert list(out.columns) == config.TICKERS + [config.BENCHMARK_TICKER]
+    assert np.allclose(out["AAPL"].values, prices["AAPL"].values)
+    assert (out.index == prices.index).all()
+
+
+def test_chart_api_errors_are_swallowed_into_empty_result(monkeypatch):
+    monkeypatch.setattr(dp.requests, "get", lambda *a, **k: _Resp({}, status=429))
+    assert dp._fetch_chart_api("AAPL", "2020-01-01", "2020-06-01").empty
+    monkeypatch.setattr(dp.requests, "get", lambda *a, **k: _Resp({"chart": {"result": None}}))
+    assert dp._fetch_chart_api("AAPL", "2020-01-01", "2020-06-01").empty

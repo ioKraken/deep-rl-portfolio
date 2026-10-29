@@ -34,3 +34,14 @@ def tiny_config(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "MODEL_DIR", str(tmp_path / "models"))
     monkeypatch.setattr(config, "RESULTS_DIR", str(tmp_path / "results"))
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Tests must never hit Yahoo; individual tests install their own fakes over this."""
+    import requests
+
+    def blocked(*args, **kwargs):
+        raise requests.ConnectionError("network disabled in tests")
+
+    monkeypatch.setattr(requests, "get", blocked)

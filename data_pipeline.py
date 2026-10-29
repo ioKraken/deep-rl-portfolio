@@ -8,6 +8,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import requests
 import yfinance as yf
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
@@ -32,6 +33,36 @@ def _fetch_close(tickers: list, start: str, end: str) -> pd.DataFrame:
     if isinstance(close, pd.Series):
         close = close.to_frame(tickers[0])
     return close.dropna(axis=1, how="all")
+
+
+CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+
+
+def _fetch_chart_api(ticker: str, start: str, end: str) -> pd.Series:
+    """
+    Fetch split- and dividend-adjusted closes straight from Yahoo's chart endpoint.
+    Used when yfinance itself fails; returns an empty Series if the request does.
+    """
+    period = lambda d: int(pd.Timestamp(d, tz="UTC").timestamp())
+    try:
+        resp = requests.get(
+            CHART_URL.format(ticker=ticker),
+            params={"period1": period(start), "period2": period(end),
+                    "interval": "1d", "events": "div,splits"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        result = resp.json()["chart"]["result"][0]
+        stamps = result["timestamp"]
+        adj = result["indicators"]["adjclose"][0]["adjclose"]
+        offset = result["meta"].get("gmtoffset", 0)
+    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+        return pd.Series(dtype=float)
+
+    index = pd.to_datetime(np.array(stamps) + offset, unit="s").normalize()
+    series = pd.Series(adj, index=index, dtype=float, name=ticker)
+    return series[~series.index.duplicated(keep="last")].dropna()
 
 
 def download_data(start: str = None, end: str = None, use_cache: bool = False) -> pd.DataFrame:
@@ -69,6 +100,11 @@ def download_data(start: str = None, end: str = None, use_cache: bool = False) -
             close = _fetch_close(batch, start, end)
             for t in close.columns:
                 frames[t] = close[t]
+            for t in batch:
+                if t not in frames:
+                    series = _fetch_chart_api(t, start, end)
+                    if not series.empty:
+                        frames[t] = series
 
     if not frames:
         raise RuntimeError("yfinance returned no data (network problem or rate limit?)")
