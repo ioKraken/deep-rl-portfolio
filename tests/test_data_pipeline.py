@@ -123,3 +123,17 @@ def test_download_cache_roundtrip(monkeypatch, fast_retries, tmp_path):
     second = dp.download_data(use_cache=True)
     assert len(calls) == n_calls  # served from cache
     assert np.allclose(first.values, second.values)
+
+
+def test_load_prices_csv_filters_dates_and_validates(tmp_path):
+    p = _prices(500)
+    p.index = pd.bdate_range("2018-06-01", periods=500)
+    path = tmp_path / "p.csv"
+    p.to_csv(path)
+    out = dp.load_prices_csv(str(path))
+    assert out.index.min() >= pd.Timestamp(config.START_DATE)
+    assert out.index.max() <= pd.Timestamp(config.END_DATE)
+
+    p.drop(columns=[config.TICKERS[0]]).to_csv(path)
+    with pytest.raises(RuntimeError, match=config.TICKERS[0]):
+        dp.load_prices_csv(str(path))

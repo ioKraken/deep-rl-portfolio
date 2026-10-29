@@ -21,6 +21,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Train, backtest and report the PPO portfolio agent")
     parser.add_argument("--iterations", type=int, default=None,
                         help=f"Training iterations (default: {config.NUM_TRAINING_ITERATIONS})")
+    parser.add_argument("--prices-csv",
+                        help="Use prices from this CSV (date index, one column per ticker) instead of Yahoo")
     args = parser.parse_args(argv)
     if args.iterations is not None:
         config.NUM_TRAINING_ITERATIONS = args.iterations
@@ -45,7 +47,7 @@ def main(argv=None):
         benchmark_train,
         benchmark_test,
         prices_df,
-    ) = prepare_data()
+    ) = prepare_data(args.prices_csv)
     print()
 
     # Step 2: Training

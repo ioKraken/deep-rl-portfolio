@@ -33,6 +33,7 @@ pip install -r requirements.txt
 ```bash
 python run.py                    # full run (needs internet for yfinance)
 python run.py --iterations 20    # quick run
+python run.py --prices-csv prices.csv   # use your own prices if Yahoo blocks you
 ```
 
 ### 3. View results

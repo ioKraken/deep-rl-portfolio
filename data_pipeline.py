@@ -81,6 +81,18 @@ def download_data(start: str = None, end: str = None, use_cache: bool = False) -
     return cleaned
 
 
+def load_prices_csv(path: str) -> pd.DataFrame:
+    """
+    Load prices from a CSV: first column is the date, one column per ticker
+    (all of config.TICKERS plus config.BENCHMARK_TICKER), adjusted close prices.
+    Rows outside START_DATE..END_DATE are dropped.
+    """
+    prices = pd.read_csv(path, index_col=0, parse_dates=True).sort_index()
+    prices = prices.loc[config.START_DATE : config.END_DATE]
+    print(f"[Data] Loaded prices from {path}")
+    return clean_prices(prices)
+
+
 def clean_prices(prices: pd.DataFrame) -> pd.DataFrame:
     """
     Validate and clean a raw price table. A ticker with no data at all must be an error:
@@ -178,7 +190,7 @@ def normalize_features(features: np.ndarray, lookback: int) -> np.ndarray:
     return np.clip(normalized, -config.FEATURE_CLIP, config.FEATURE_CLIP)
 
 
-def prepare_data():
+def prepare_data(prices_csv: str = None):
     """
     Full pipeline: download → features → normalize → split.
     Returns:
@@ -190,7 +202,7 @@ def prepare_data():
         benchmark_test:  (n_test_days,)
         prices_df: full DataFrame for reference
     """
-    prices_df = download_data(use_cache=True)
+    prices_df = load_prices_csv(prices_csv) if prices_csv else download_data(use_cache=True)
 
     # Compute features
     features, n_feat = compute_features(prices_df)
