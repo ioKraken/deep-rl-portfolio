@@ -118,7 +118,11 @@ class PortfolioEnv:
         self.portfolio_value *= (1 + port_return)
         self.portfolio_returns.append(port_return)
 
-        reward = self._compute_reward(port_return)
+        if config.REWARD_MODE == "excess":
+            reward = float(np.clip(
+                (port_return - asset_returns.mean()) * config.EXCESS_REWARD_SCALE, -2.0, 2.0))
+        else:
+            reward = self._compute_reward(port_return)
 
         # terminated: ran out of data. truncated: hit the trajectory time limit (the
         # episode did not really end, so the learner should bootstrap from the value estimate).

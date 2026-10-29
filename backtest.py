@@ -47,6 +47,8 @@ def run_backtest(agent: PPOAgent, test_features: np.ndarray, test_prices: np.nda
     daily_returns = np.array(daily_returns)
     weights_history = np.array(weights_history)
 
+    ew_values, ew_returns = run_equal_weight(test_features, test_prices)
+
     # Benchmark (S&P 500) performance
     bench = benchmark_prices[config.LOOKBACK_WINDOW:]
     bench_values = bench / bench[0]
@@ -63,17 +65,33 @@ def run_backtest(agent: PPOAgent, test_features: np.ndarray, test_prices: np.nda
 
     # Compute metrics
     metrics = compute_metrics(daily_returns, portfolio_values, bench_returns, bench_values)
+    ew = compute_metrics(ew_returns, ew_values, bench_returns, bench_values)
+    for key in ("annualized_return", "total_return", "sharpe_ratio", "sortino_ratio", "max_drawdown"):
+        metrics[f"equal_weight_{key}"] = ew[key]
     metrics["turnovers"] = turnovers
     metrics["avg_daily_turnover"] = float(np.mean(turnovers)) if turnovers else 0.0
 
     return {
         "portfolio_values": portfolio_values,
         "benchmark_values": bench_values,
+        "equal_weight_values": ew_values,
         "daily_returns": daily_returns,
         "bench_returns": bench_returns,
         "weights_history": weights_history[:n],
         "metrics": metrics,
     }
+
+
+def run_equal_weight(features: np.ndarray, prices: np.ndarray):
+    """Hold the equal-weight portfolio through the same environment (same costs, same days)."""
+    env = PortfolioEnv(features, prices, is_train=False)
+    env.reset()
+    values, returns = [1.0], []
+    while not env.done:
+        _, _, _, info = env.step(np.ones(env.n_assets))
+        values.append(info["portfolio_value"])
+        returns.append(info["portfolio_return"])
+    return np.array(values), np.array(returns)
 
 
 def compute_metrics(daily_returns, portfolio_values, bench_returns, bench_values) -> dict:
@@ -166,6 +184,9 @@ def generate_plots(backtest_result: dict, save_dir: str):
 
     ax.plot(pv, color=colors["portfolio"], linewidth=2, label=f'RL Portfolio ({metrics["annualized_return"]*100:.1f}% ann.)')
     ax.plot(bv, color=colors["benchmark"], linewidth=2, alpha=0.8, label=f'S&P 500 ({metrics["benchmark_annualized_return"]*100:.1f}% ann.)')
+    ew = backtest_result["equal_weight_values"][: len(pv)]
+    ax.plot(ew, color="#FFD700", linewidth=1.5, linestyle="--",
+            label=f'Equal-weight ({metrics["equal_weight_annualized_return"]*100:.1f}% ann.)')
     ax.fill_between(range(len(pv)), 1, pv, alpha=0.1, color=colors["portfolio"])
 
     ax.set_title("Cumulative Returns: RL Portfolio vs S&P 500", fontsize=16, color=colors["text"], fontweight="bold")
@@ -317,6 +338,7 @@ def generate_plots(backtest_result: dict, save_dir: str):
         ("Annualized Return", f"{metrics['annualized_return']*100:.2f}%", f"{metrics['benchmark_annualized_return']*100:.2f}%"),
         ("Total Return", f"{metrics['total_return']*100:.2f}%", f"{metrics['benchmark_total_return']*100:.2f}%"),
         ("Sharpe Ratio", f"{metrics['sharpe_ratio']:.2f}", f"{metrics['benchmark_sharpe']:.2f}"),
+        ("Equal-wt Sharpe", f"{metrics['equal_weight_sharpe_ratio']:.2f}", "-"),
         ("Sortino Ratio", f"{metrics['sortino_ratio']:.2f}", "-"),
         ("Max Drawdown", f"{metrics['max_drawdown']*100:.2f}%", f"{metrics['benchmark_max_drawdown']*100:.2f}%"),
         ("Calmar Ratio", f"{metrics['calmar_ratio']:.2f}", "-"),
@@ -372,6 +394,8 @@ def print_results(metrics: dict):
     print(f"  {'Annualized Return':<30} {metrics['annualized_return']*100:>17.2f}% {metrics['benchmark_annualized_return']*100:>17.2f}%")
     print(f"  {'Total Return':<30} {metrics['total_return']*100:>17.2f}% {metrics['benchmark_total_return']*100:>17.2f}%")
     print(f"  {'Sharpe Ratio':<30} {metrics['sharpe_ratio']:>18.2f} {metrics['benchmark_sharpe']:>18.2f}")
+    print(f"  {'Equal-weight Sharpe':<30} {metrics['equal_weight_sharpe_ratio']:>18.2f} {'—':>18}")
+    print(f"  {'Equal-weight Ann. Return':<30} {metrics['equal_weight_annualized_return']*100:>17.2f}% {'—':>18}")
     print(f"  {'Sortino Ratio':<30} {metrics['sortino_ratio']:>18.2f} {'—':>18}")
     print(f"  {'Max Drawdown':<30} {metrics['max_drawdown']*100:>17.2f}% {metrics['benchmark_max_drawdown']*100:>17.2f}%")
     print(f"  {'Calmar Ratio':<30} {metrics['calmar_ratio']:>18.2f} {'—':>18}")

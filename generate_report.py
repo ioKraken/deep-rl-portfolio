@@ -41,6 +41,8 @@ def generate_report():
     ret_gap = m["annualized_return"] - m["benchmark_annualized_return"]
     sharpe_gap = m["sharpe_ratio"] - m["benchmark_sharpe"]
     dd_better = m["max_drawdown"] > m["benchmark_max_drawdown"]
+    ew_gap = m["sharpe_ratio"] - m.get("equal_weight_sharpe_ratio", m["sharpe_ratio"])
+    ew_word = "above" if ew_gap > 0 else "below"
     ret_word = "above" if ret_gap > 0 else "below"
     sharpe_word = "above" if sharpe_gap > 0 else "below"
     dd_word = "shallower" if dd_better else "deeper"
@@ -564,6 +566,7 @@ def generate_report():
                         <tr><td>Annualized Return</td><td>{m['annualized_return']*100:.2f}%</td><td>{m['benchmark_annualized_return']*100:.2f}%</td></tr>
                         <tr><td>Total Return</td><td>{m['total_return']*100:.2f}%</td><td>{m['benchmark_total_return']*100:.2f}%</td></tr>
                         <tr><td>Sharpe Ratio</td><td>{m['sharpe_ratio']:.2f}</td><td>{m['benchmark_sharpe']:.2f}</td></tr>
+                        <tr><td>Equal-weight baseline: Ann. Return / Sharpe</td><td colspan="2">{m.get('equal_weight_annualized_return', float('nan'))*100:.2f}% / {m.get('equal_weight_sharpe_ratio', float('nan')):.2f}</td></tr>
                         <tr><td>Sortino Ratio</td><td>{m['sortino_ratio']:.2f}</td><td>—</td></tr>
                         <tr><td>Max Drawdown</td><td>{m['max_drawdown']*100:.2f}%</td><td>{m['benchmark_max_drawdown']*100:.2f}%</td></tr>
                         <tr><td>Calmar Ratio</td><td>{m['calmar_ratio']:.2f}</td><td>—</td></tr>
@@ -673,7 +676,8 @@ def generate_report():
                         The RL portfolio has a <strong>Sharpe ratio of {m['sharpe_ratio']:.2f}</strong>
                         ({sharpe_word} the benchmark's {m['benchmark_sharpe']:.2f}) and a
                         <strong>Sortino ratio of {m['sortino_ratio']:.2f}</strong> on a single
-                        out-of-sample period. One period and one training seed are not enough to
+                        out-of-sample period; an equal-weight portfolio of the same stocks scored
+                        {m.get('equal_weight_sharpe_ratio', float('nan')):.2f} (the agent is {abs(ew_gap):.2f} {ew_word} it). One period and one training seed are not enough to
                         claim a durable edge.
                     </p>
                 </div>

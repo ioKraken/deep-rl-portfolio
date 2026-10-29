@@ -56,7 +56,7 @@ class ActorHead(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim // 2, n_assets),
         )
-        self.log_std = nn.Parameter(torch.zeros(n_assets) - 0.5)  # Learnable log std
+        self.log_std = nn.Parameter(torch.full((n_assets,), float(config.LOG_STD_INIT)))  # Learnable log std
         self.n_assets = n_assets
 
     def forward(self, features: torch.Tensor, current_weights: torch.Tensor):

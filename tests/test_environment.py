@@ -104,3 +104,20 @@ def test_episode_stats_total_loss_does_not_produce_nan(monkeypatch):
     while not env.done:
         env.step(np.ones(3))
     assert np.isfinite(env.get_episode_stats()["annualized_return"])
+
+
+def test_excess_reward_is_zero_for_equal_weight_and_signed_otherwise(synthetic, monkeypatch):
+    monkeypatch.setattr(config, "REWARD_MODE", "excess")
+    monkeypatch.setattr(config, "TRANSACTION_COST", 0.0)
+    features, prices, _ = synthetic
+    env = PortfolioEnv(features, prices, is_train=False)
+    env.reset()
+    _, r_equal, _, _ = env.step(np.ones(config.N_ASSETS))
+    assert r_equal == pytest.approx(0.0, abs=1e-9)
+
+    env.reset()
+    day = env.returns[config.LOOKBACK_WINDOW + 1]
+    best = np.zeros(config.N_ASSETS)
+    best[np.argsort(day)[-10:]] = 1.0       # the ten best performers of the next day
+    _, r_best, _, _ = env.step(best)
+    assert r_best > 0

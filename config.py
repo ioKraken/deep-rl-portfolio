@@ -57,9 +57,15 @@ MAX_POSITION_SIZE = 0.10    # Max 10% in any single asset
 SHARPE_WINDOW = 60          # Rolling window for Sharpe reward
 RISK_FREE_RATE = 0.04       # Annual risk-free rate (≈ recent T-bill)
 
+# Reward: "sharpe" = differential Sharpe ratio, "excess" = return minus the equal-weight
+# portfolio's return (scaled), which removes market-wide noise from the learning signal.
+REWARD_MODE = "sharpe"
+EXCESS_REWARD_SCALE = 50.0
+
 # Network Architecture
 LSTM_HIDDEN_SIZE = 128
 LSTM_NUM_LAYERS = 2
+LOG_STD_INIT = -0.5         # Initial log std of the Gaussian policy in logit space
 LSTM_DROPOUT = 0.0          # Must stay 0: rollout and update passes would otherwise use different dropout masks
 
 # PPO Hyperparameters

@@ -80,3 +80,17 @@ def test_print_results_runs(synthetic, capsys):
     agent = PPOAgent(config.N_ASSETS * config.N_FEATURES, config.N_ASSETS)
     print_results(run_backtest(agent, features, prices, bench)["metrics"])
     assert "BACKTEST RESULTS" in capsys.readouterr().out
+
+
+def test_equal_weight_baseline_matches_uniform_env_run(synthetic):
+    from backtest import run_equal_weight
+    features, prices, bench = synthetic
+    values, rets = run_equal_weight(features, prices)
+    t0 = config.LOOKBACK_WINDOW
+    expected = np.cumprod(1 + (prices[t0 + 1:] / prices[t0:-1] - 1).mean(axis=1))
+    assert values[1:] == pytest.approx(expected)
+
+    agent = PPOAgent(config.N_ASSETS * config.N_FEATURES, config.N_ASSETS)
+    m = run_backtest(agent, features, prices, bench)["metrics"]
+    assert m["equal_weight_sharpe_ratio"] == pytest.approx(
+        _metrics(rets)["sharpe_ratio"], rel=1e-3)
