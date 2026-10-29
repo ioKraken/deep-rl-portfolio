@@ -9,6 +9,7 @@ import os
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR = os.path.join(PROJECT_DIR, "results")
 MODEL_DIR = os.path.join(PROJECT_DIR, "models")
+DATA_DIR = os.path.join(PROJECT_DIR, "data")  # price cache, git-ignored
 
 # Universe: 50 Large-Cap Equities
 TICKERS = [
@@ -26,15 +27,23 @@ TICKERS = [
 
 BENCHMARK_TICKER = "SPY"
 N_ASSETS = len(TICKERS)
+N_FEATURES = 5  # log return, volatility, RSI, MACD histogram, Bollinger %B
 
 # Date Ranges 
 START_DATE = "2019-01-01"
 END_DATE = "2024-12-31"
 TRAIN_RATIO = 0.70  # 70% train, 30% test
+VAL_RATIO = 0.20    # Last 20% of the train split is held out for model selection
+
+# Download behaviour (Yahoo throttles bulk requests)
+DOWNLOAD_BATCH_SIZE = 10
+DOWNLOAD_RETRIES = 4
+DOWNLOAD_RETRY_WAIT = 15    # seconds, multiplied by the retry number
 
 # Feature Engineering
 LOOKBACK_WINDOW = 60        # Days of history the LSTM sees
 ROLLING_VOL_WINDOW = 20     # For rolling volatility
+FEATURE_CLIP = 5.0          # Normalized features are clipped to +/- this value
 RSI_WINDOW = 14
 MACD_FAST = 12
 MACD_SLOW = 26
@@ -48,10 +57,16 @@ MAX_POSITION_SIZE = 0.10    # Max 10% in any single asset
 SHARPE_WINDOW = 60          # Rolling window for Sharpe reward
 RISK_FREE_RATE = 0.04       # Annual risk-free rate (≈ recent T-bill)
 
+# Reward: "sharpe" = differential Sharpe ratio, "excess" = return minus the equal-weight
+# portfolio's return (scaled), which removes market-wide noise from the learning signal.
+REWARD_MODE = "sharpe"
+EXCESS_REWARD_SCALE = 50.0
+
 # Network Architecture
 LSTM_HIDDEN_SIZE = 128
 LSTM_NUM_LAYERS = 2
-LSTM_DROPOUT = 0.1
+LOG_STD_INIT = -0.5         # Initial log std of the Gaussian policy in logit space
+LSTM_DROPOUT = 0.0          # Must stay 0: rollout and update passes would otherwise use different dropout masks
 
 # PPO Hyperparameters
 LEARNING_RATE = 1e-4
@@ -67,8 +82,11 @@ TRAJECTORY_LENGTH = 200     # ~10 months trading days per trajectory
 
 #  Training
 NUM_TRAINING_ITERATIONS = 150  # Number of training iterations
+VAL_EVAL_EVERY = 5             # Validate (and maybe checkpoint) every N iterations
 SEED = 42
 
-# Ensure directories exist
-os.makedirs(RESULTS_DIR, exist_ok=True)
-os.makedirs(MODEL_DIR, exist_ok=True)
+
+def ensure_dirs():
+    """Create output directories. Called by the code that writes to them, not at import time."""
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    os.makedirs(MODEL_DIR, exist_ok=True)

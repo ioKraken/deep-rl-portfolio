@@ -80,6 +80,7 @@ class PPOAgent:
     def __init__(self, obs_feature_dim: int, n_assets: int, device: str = "cpu"):
         self.device = torch.device(device)
         self.n_assets = n_assets
+        self.obs_feature_dim = obs_feature_dim
 
         self.model = ActorCritic(obs_feature_dim, n_assets).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=config.LEARNING_RATE, eps=1e-5)
@@ -105,23 +106,26 @@ class PPOAgent:
 
         total_reward = 0
         steps = 0
+        terminated = False
 
         while not env.done:
             market_window, current_weights = obs
             weights, logits, log_prob, value = self.select_action(market_window, current_weights)
 
             obs, reward, done, info = env.step(weights)
-            self.buffer.add(market_window, current_weights, weights, logits, log_prob, reward, value, done)
+            terminated = info["terminated"]
+            self.buffer.add(market_window, current_weights, weights, logits, log_prob, reward, value, terminated)
 
             total_reward += reward
             steps += 1
 
-        # Get last value for GAE
-        if not done:
+        # Bootstrap from the critic when the trajectory was cut by the time limit;
+        # only a real end of data has zero future value.
+        if terminated:
+            last_value = 0.0
+        else:
             market_window, current_weights = obs
             _, _, _, last_value = self.select_action(market_window, current_weights)
-        else:
-            last_value = 0.0
 
         return total_reward, steps, last_value
 
@@ -164,7 +168,7 @@ class PPOAgent:
                 surr2 = torch.clamp(ratio, 1 - config.PPO_CLIP, 1 + config.PPO_CLIP) * mb_adv
                 policy_loss = -torch.min(surr1, surr2).mean()
 
-                # Value loss (clipped)
+                # Value loss
                 value_loss = F.mse_loss(new_values, mb_ret)
 
                 # Entropy bonus
@@ -201,9 +205,27 @@ class PPOAgent:
         torch.save({
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
+            "meta": {
+                "obs_feature_dim": self.obs_feature_dim,
+                "n_assets": self.n_assets,
+                "hidden_size": config.LSTM_HIDDEN_SIZE,
+                "num_layers": config.LSTM_NUM_LAYERS,
+                "tickers": list(config.TICKERS),
+            },
         }, path)
 
-    def load(self, path: str):
+    def load(self, path: str, load_optimizer: bool = True):
         checkpoint = torch.load(path, map_location=self.device, weights_only=True)
+        meta = checkpoint.get("meta")
+        if meta is not None:
+            if meta["n_assets"] != self.n_assets or meta["obs_feature_dim"] != self.obs_feature_dim:
+                raise ValueError(
+                    f"Checkpoint was trained for {meta['n_assets']} assets / "
+                    f"{meta['obs_feature_dim']} features, agent has "
+                    f"{self.n_assets} / {self.obs_feature_dim}"
+                )
+            if list(meta["tickers"]) != list(config.TICKERS):
+                raise ValueError("Checkpoint ticker list differs from config.TICKERS")
         self.model.load_state_dict(checkpoint["model_state_dict"])
-        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if load_optimizer and "optimizer_state_dict" in checkpoint:
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])

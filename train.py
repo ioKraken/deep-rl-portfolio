@@ -13,6 +13,25 @@ from environment import PortfolioEnv
 from ppo import PPOAgent
 
 
+def select_device() -> str:
+    """RL_DEVICE env var wins; otherwise MPS if available, else CPU."""
+    override = os.environ.get("RL_DEVICE")
+    if override:
+        return override
+    return "mps" if torch.backends.mps.is_available() else "cpu"
+
+
+def evaluate_policy(agent: PPOAgent, features: np.ndarray, prices: np.ndarray) -> dict:
+    """Run the deterministic policy once over the whole slice and return episode stats."""
+    env = PortfolioEnv(features, prices, is_train=False)
+    obs = env.reset()
+    while not env.done:
+        window, current_weights = obs
+        action, _, _, _ = agent.select_action(window, current_weights, deterministic=True)
+        obs, _, _, _ = env.step(action)
+    return env.get_episode_stats()
+
+
 def train(train_features: np.ndarray, train_prices: np.ndarray) -> PPOAgent:
     """
     Train the PPO agent on the training data.
@@ -24,13 +43,23 @@ def train(train_features: np.ndarray, train_prices: np.ndarray) -> PPOAgent:
     Returns:
         Trained PPOAgent
     """
+    config.ensure_dirs()
+
     # Set seeds
     np.random.seed(config.SEED)
     torch.manual_seed(config.SEED)
 
-    # Device
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = select_device()
     print(f"[Train] Using device: {device}")
+
+    # Hold out the tail of the training period for model selection. The slice keeps
+    # LOOKBACK_WINDOW days of leading context so every validation day is scored.
+    n_val = int(len(train_features) * config.VAL_RATIO)
+    fit_end = len(train_features) - n_val
+    val_start = max(fit_end - config.LOOKBACK_WINDOW, 0)
+    val_features, val_prices = train_features[val_start:], train_prices[val_start:]
+    train_features, train_prices = train_features[:fit_end], train_prices[:fit_end]
+    print(f"[Train] Fit: {len(train_features)} days | Validation: {n_val} days")
 
     # Create environment and agent
     env = PortfolioEnv(train_features, train_prices, is_train=True)
@@ -44,7 +73,7 @@ def train(train_features: np.ndarray, train_prices: np.ndarray) -> PPOAgent:
     print(f"[Train] Trajectory length: ~{config.TRAJECTORY_LENGTH} days")
     print()
 
-    best_sharpe = -np.inf
+    best_val_sharpe = -np.inf
     best_model_path = os.path.join(config.MODEL_DIR, "best_model.pt")
 
     training_log = {
@@ -53,6 +82,7 @@ def train(train_features: np.ndarray, train_prices: np.ndarray) -> PPOAgent:
         "returns": [],
         "policy_losses": [],
         "value_losses": [],
+        "val_sharpe": [],
     }
 
     start_time = time.time()
@@ -76,10 +106,17 @@ def train(train_features: np.ndarray, train_prices: np.ndarray) -> PPOAgent:
         training_log["policy_losses"].append(update_stats["policy_loss"])
         training_log["value_losses"].append(update_stats["value_loss"])
 
-        # Save best model
-        if ep_sharpe > best_sharpe:
-            best_sharpe = ep_sharpe
-            agent.save(best_model_path)
+        # Checkpoint on validation Sharpe (a single random training window is too noisy to select on)
+        val_msg = ""
+        if iteration % config.VAL_EVAL_EVERY == 0 or iteration == 1 or iteration == config.NUM_TRAINING_ITERATIONS:
+            val_sharpe = evaluate_policy(agent, val_features, val_prices).get("sharpe_ratio", -np.inf)
+            if not np.isfinite(val_sharpe):
+                val_sharpe = -np.inf
+            training_log["val_sharpe"].append((iteration, val_sharpe))
+            val_msg = f" | Val Sharpe: {val_sharpe:>6.2f}"
+            if val_sharpe > best_val_sharpe or not os.path.exists(best_model_path):
+                best_val_sharpe = val_sharpe
+                agent.save(best_model_path)
 
         # Print progress
         if iteration % 5 == 0 or iteration == 1:
@@ -95,13 +132,13 @@ def train(train_features: np.ndarray, train_prices: np.ndarray) -> PPOAgent:
                 f"Ann.Ret: {avg_return*100:>7.2f}% | "
                 f"π Loss: {update_stats['policy_loss']:>8.4f} | "
                 f"V Loss: {update_stats['value_loss']:>8.4f} | "
-                f"Entropy: {update_stats['entropy']:>6.3f} | "
-                f"[{elapsed:.0f}s]"
+                f"Entropy: {update_stats['entropy']:>6.3f}"
+                f"{val_msg} | [{elapsed:.0f}s]"
             )
 
     total_time = time.time() - start_time
     print(f"\n[Train] Training complete in {total_time:.1f}s")
-    print(f"[Train] Best training Sharpe: {best_sharpe:.3f}")
+    print(f"[Train] Best validation Sharpe: {best_val_sharpe:.3f}")
     print(f"[Train] Best model saved to {best_model_path}")
 
     # Load best model for backtesting
@@ -119,6 +156,7 @@ def _save_training_plots(training_log: dict):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    config.ensure_dirs()
     colors = {"bg": "#1a1a2e", "text": "#e0e0e0", "line": "#00D4AA", "line2": "#FF6B6B"}
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
