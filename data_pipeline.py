@@ -2,6 +2,8 @@
 Data Pipeline: Download stock data, compute technical features, normalize, and split.
 """
 
+import os
+import time
 import warnings
 
 import numpy as np
@@ -14,25 +16,69 @@ from ta.volatility import BollingerBands
 import config
 
 
-def download_data(start: str = None, end: str = None) -> pd.DataFrame:
-    """Download adjusted close prices for all tickers + benchmark."""
-    start = start or config.START_DATE
-    end = end or config.END_DATE
-    all_tickers = config.TICKERS + [config.BENCHMARK_TICKER]
-    print(f"[Data] Downloading {len(all_tickers)} tickers from {start} to {end} ...")
+def _fetch_close(tickers: list, start: str, end: str) -> pd.DataFrame:
+    """One yfinance call for a small batch; returns a Close table (possibly empty)."""
     data = yf.download(
-        all_tickers,
+        tickers,
         start=start,
         end=end,
         auto_adjust=True,
         progress=False,
+        threads=False,  # yfinance's parallel mode is what trips Yahoo's rate limiter
     )
     if data is None or data.empty:
-        raise RuntimeError("yfinance returned no data (network problem or rate limit?)")
+        return pd.DataFrame()
+    close = data["Close"] if "Close" in data.columns.get_level_values(0) else data
+    if isinstance(close, pd.Series):
+        close = close.to_frame(tickers[0])
+    return close.dropna(axis=1, how="all")
 
-    # yfinance returns MultiIndex columns: (Price, Ticker)
-    prices = data["Close"] if "Close" in data.columns.get_level_values(0) else data
-    return clean_prices(prices)
+
+def download_data(start: str = None, end: str = None, use_cache: bool = False) -> pd.DataFrame:
+    """
+    Download adjusted close prices for all tickers + benchmark.
+
+    Tickers are fetched in small sequential batches and the ones that come back empty
+    are retried with growing waits, because Yahoo throttles bulk requests by returning
+    "possibly delisted" for tickers that exist. With use_cache the cleaned table is
+    stored under data/ and reused on the next run.
+    """
+    start = start or config.START_DATE
+    end = end or config.END_DATE
+    required = config.TICKERS + [config.BENCHMARK_TICKER]
+
+    cache_path = os.path.join(config.DATA_DIR, f"prices_{start}_{end}.csv")
+    if use_cache and os.path.exists(cache_path):
+        cached = pd.read_csv(cache_path, index_col=0, parse_dates=True)
+        if all(t in cached.columns for t in required):
+            print(f"[Data] Loaded cached prices from {cache_path}")
+            return clean_prices(cached)
+
+    print(f"[Data] Downloading {len(required)} tickers from {start} to {end} ...")
+    frames = {}
+    for attempt in range(1, config.DOWNLOAD_RETRIES + 1):
+        remaining = [t for t in required if t not in frames]
+        if not remaining:
+            break
+        if attempt > 1:
+            wait = config.DOWNLOAD_RETRY_WAIT * (attempt - 1)
+            print(f"[Data] Retry {attempt - 1}: {len(remaining)} tickers missing, waiting {wait:.0f}s")
+            time.sleep(wait)
+        for i in range(0, len(remaining), config.DOWNLOAD_BATCH_SIZE):
+            batch = remaining[i : i + config.DOWNLOAD_BATCH_SIZE]
+            close = _fetch_close(batch, start, end)
+            for t in close.columns:
+                frames[t] = close[t]
+
+    if not frames:
+        raise RuntimeError("yfinance returned no data (network problem or rate limit?)")
+    prices = pd.DataFrame(frames)
+    cleaned = clean_prices(prices)
+
+    if use_cache:
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        cleaned.to_csv(cache_path)
+    return cleaned
 
 
 def clean_prices(prices: pd.DataFrame) -> pd.DataFrame:
@@ -144,7 +190,7 @@ def prepare_data():
         benchmark_test:  (n_test_days,)
         prices_df: full DataFrame for reference
     """
-    prices_df = download_data()
+    prices_df = download_data(use_cache=True)
 
     # Compute features
     features, n_feat = compute_features(prices_df)

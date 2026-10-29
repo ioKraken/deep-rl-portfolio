@@ -9,6 +9,7 @@ import os
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR = os.path.join(PROJECT_DIR, "results")
 MODEL_DIR = os.path.join(PROJECT_DIR, "models")
+DATA_DIR = os.path.join(PROJECT_DIR, "data")  # price cache, git-ignored
 
 # Universe: 50 Large-Cap Equities
 TICKERS = [
@@ -33,6 +34,11 @@ START_DATE = "2019-01-01"
 END_DATE = "2024-12-31"
 TRAIN_RATIO = 0.70  # 70% train, 30% test
 VAL_RATIO = 0.20    # Last 20% of the train split is held out for model selection
+
+# Download behaviour (Yahoo throttles bulk requests)
+DOWNLOAD_BATCH_SIZE = 10
+DOWNLOAD_RETRIES = 4
+DOWNLOAD_RETRY_WAIT = 15    # seconds, multiplied by the retry number
 
 # Feature Engineering
 LOOKBACK_WINDOW = 60        # Days of history the LSTM sees

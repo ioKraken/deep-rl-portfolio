@@ -33,3 +33,4 @@ __MACOSX/
 # Local
 .pytest_cache/
 .venv/
+data/

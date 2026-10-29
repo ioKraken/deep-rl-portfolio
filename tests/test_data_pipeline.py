@@ -62,7 +62,7 @@ def test_normalization_is_finite_and_bounded():
 
 
 def test_prepare_data_split_and_alignment(monkeypatch):
-    monkeypatch.setattr(dp, "download_data", lambda: _prices(500))
+    monkeypatch.setattr(dp, "download_data", lambda **k: _prices(500))
     tf, sf, tp, sp, bt, bs, df = dp.prepare_data()
     assert len(tf) == len(tp) == len(bt)
     assert len(sf) == len(sp) == len(bs)
@@ -71,3 +71,55 @@ def test_prepare_data_split_and_alignment(monkeypatch):
     # train precedes test chronologically: test prices continue the train series
     full = df[config.TICKERS].values[config.LOOKBACK_WINDOW:]
     assert np.array_equal(np.vstack([tp, sp]), full)
+
+
+def _fake_yf(prices, fail_first_n_calls=0, calls=None):
+    """Stand-in for yf.download that returns nothing for the first N calls (throttling)."""
+    state = {"n": 0}
+
+    def fake(tickers, **kwargs):
+        state["n"] += 1
+        if calls is not None:
+            calls.append(list(tickers))
+        assert kwargs.get("threads") is False
+        if state["n"] <= fail_first_n_calls:
+            return pd.DataFrame()
+        return pd.concat({"Close": prices[list(tickers)]}, axis=1)
+
+    return fake
+
+
+@pytest.fixture
+def fast_retries(monkeypatch):
+    monkeypatch.setattr(dp.time, "sleep", lambda s: None)
+
+
+def test_download_batches_and_assembles_all_tickers(monkeypatch, fast_retries):
+    calls = []
+    monkeypatch.setattr(dp.yf, "download", _fake_yf(_prices(), calls=calls))
+    out = dp.download_data()
+    assert list(out.columns) == config.TICKERS + [config.BENCHMARK_TICKER]
+    assert max(len(c) for c in calls) <= config.DOWNLOAD_BATCH_SIZE
+
+
+def test_download_retries_throttled_batches(monkeypatch, fast_retries):
+    monkeypatch.setattr(dp.yf, "download", _fake_yf(_prices(), fail_first_n_calls=3))
+    out = dp.download_data()
+    assert out.shape[1] == config.N_ASSETS + 1
+
+
+def test_download_gives_up_with_clear_error(monkeypatch, fast_retries):
+    monkeypatch.setattr(dp.yf, "download", _fake_yf(_prices(), fail_first_n_calls=10**6))
+    with pytest.raises(RuntimeError, match="no data"):
+        dp.download_data()
+
+
+def test_download_cache_roundtrip(monkeypatch, fast_retries, tmp_path):
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    calls = []
+    monkeypatch.setattr(dp.yf, "download", _fake_yf(_prices(), calls=calls))
+    first = dp.download_data(use_cache=True)
+    n_calls = len(calls)
+    second = dp.download_data(use_cache=True)
+    assert len(calls) == n_calls  # served from cache
+    assert np.allclose(first.values, second.values)
