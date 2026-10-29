@@ -4,12 +4,14 @@ Embeds all chart images as base64 for a single-file, no-dependencies report.
 """
 
 import base64
+import datetime
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
+from networks import ActorCritic
 
 
 def img_to_base64(path):
@@ -34,6 +36,23 @@ def generate_report():
         path = os.path.join(results_dir, f"{name}.png")
         if os.path.exists(path):
             images[name] = img_to_base64(path)
+
+    # Wording that depends on the results is derived from the numbers, never hardcoded.
+    ret_gap = m["annualized_return"] - m["benchmark_annualized_return"]
+    sharpe_gap = m["sharpe_ratio"] - m["benchmark_sharpe"]
+    dd_better = m["max_drawdown"] > m["benchmark_max_drawdown"]
+    ret_word = "above" if ret_gap > 0 else "below"
+    sharpe_word = "above" if sharpe_gap > 0 else "below"
+    dd_word = "shallower" if dd_better else "deeper"
+    alpha_word = "positive" if m["alpha"] > 0 else "negative"
+    n_params = sum(p.numel() for p in ActorCritic(config.N_ASSETS * config.N_FEATURES, config.N_ASSETS).parameters())
+    turnover_line = (
+        f"Average daily turnover was {m['avg_daily_turnover']*100:.1f}% of the portfolio "
+        f"at a {config.TRANSACTION_COST*100:.2f}% cost per unit of turnover."
+        if "avg_daily_turnover" in m
+        else f"A {config.TRANSACTION_COST*100:.2f}% cost is charged per unit of turnover."
+    )
+    generated = datetime.date.today().strftime("%B %Y")
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -479,8 +498,8 @@ def generate_report():
             <h1>Portfolio Optimization<br>Results Report</h1>
             <p class="subtitle">
                 LSTM-based PPO framework optimizing allocation across 50 equities
-                with differentiable Sharpe Ratio objective, 0.25% transaction costs,
-                and position constraints — validated over a 5-year backtest.
+                with differentiable Sharpe Ratio objective, {config.TRANSACTION_COST*100:.2f}% transaction costs,
+                and position constraints — evaluated on {m['n_trading_days']} held-out trading days.
             </p>
             <div class="tech-stack">
                 <span class="tech-tag">Python</span>
@@ -567,9 +586,9 @@ def generate_report():
             <div class="chart-card">
                 <img src="data:image/png;base64,{images.get('cumulative_returns', '')}" alt="Cumulative Returns">
                 <div class="caption">
-                    The RL portfolio tracks the S&P 500 closely while maintaining lower volatility (β = {m['beta']:.2f}).
-                    The strategy achieves {m['annualized_return']*100:.1f}% annualized return with a Sharpe ratio of {m['sharpe_ratio']:.2f},
-                    reflecting strong risk-adjusted performance across the out-of-sample test period.
+                    Over the out-of-sample period the RL portfolio returned {m['annualized_return']*100:.1f}% annualized
+                    ({abs(ret_gap)*100:.1f} pts {ret_word} the S&P 500) with a Sharpe ratio of {m['sharpe_ratio']:.2f}
+                    ({abs(sharpe_gap):.2f} {sharpe_word} the benchmark) and a beta of {m['beta']:.2f}.
                 </div>
             </div>
         </div>
@@ -584,14 +603,14 @@ def generate_report():
                     <img src="data:image/png;base64,{images.get('drawdown', '')}" alt="Drawdown">
                     <div class="caption">
                         Maximum drawdown of {m['max_drawdown']*100:.1f}% vs benchmark's {m['benchmark_max_drawdown']*100:.1f}%.
-                        The RL agent demonstrates comparable drawdown resilience with faster recovery periods.
+                        The agent's maximum drawdown was {dd_word} than the benchmark's.
                     </div>
                 </div>
                 <div class="chart-card">
                     <img src="data:image/png;base64,{images.get('rolling_sharpe', '')}" alt="Rolling Sharpe">
                     <div class="caption">
-                        Rolling 60-day Sharpe ratio shows consistent risk-adjusted performance.
-                        The strategy maintains positive Sharpe through varying market regimes.
+                        Rolling 60-day Sharpe ratio of the portfolio against the benchmark.
+                        Short windows are noisy; read the trend, not individual peaks.
                     </div>
                 </div>
             </div>
@@ -606,8 +625,8 @@ def generate_report():
                 <img src="data:image/png;base64,{images.get('weight_allocation', '')}" alt="Weight Allocation">
                 <div class="caption">
                     Top 15 holdings by average weight. The RL agent dynamically adjusts allocations
-                    based on LSTM-processed market signals, subject to the 10% max position constraint.
-                    The diversified approach across 50 equities contributes to the portfolio's low Beta ({m['beta']:.2f}).
+                    based on LSTM-processed market signals, subject to the {config.MAX_POSITION_SIZE*100:.0f}% max position constraint.
+                    Measured beta versus the S&P 500 was {m['beta']:.2f}.
                 </div>
             </div>
         </div>
@@ -620,9 +639,8 @@ def generate_report():
             <div class="chart-card">
                 <img src="data:image/png;base64,{images.get('monthly_returns_heatmap', '')}" alt="Monthly Returns">
                 <div class="caption">
-                    Monthly return distribution showing positive returns in the majority of months.
-                    Win rate of {m['win_rate']*100:.1f}% at the daily level, with the Sortino ratio
-                    of {m['sortino_ratio']:.2f} confirming limited downside exposure.
+                    Returns per consecutive 21-trading-day period (not calendar months).
+                    Daily win rate was {m['win_rate']*100:.1f}% and the Sortino ratio {m['sortino_ratio']:.2f}.
                 </div>
             </div>
         </div>
@@ -635,10 +653,9 @@ def generate_report():
             <div class="chart-card">
                 <img src="data:image/png;base64,{images.get('training_progress', '')}" alt="Training Progress">
                 <div class="caption">
-                    PPO training convergence over 150 iterations. The agent learns to maximize the
-                    differential Sharpe ratio reward, with the best model checkpoint selected by
-                    highest training Sharpe (1.47). Value loss remains stable (~0.03-0.05),
-                    indicating proper reward scaling.
+                    PPO training over {config.NUM_TRAINING_ITERATIONS} iterations on the differential Sharpe
+                    reward. The checkpoint used for the backtest is the one with the highest Sharpe
+                    on a validation slice held out from the end of the training period.
                 </div>
             </div>
         </div>
@@ -651,30 +668,27 @@ def generate_report():
             </div>
             <div class="obs-grid">
                 <div class="obs-card">
-                    <h4>🎯 Strong Risk-Adjusted Returns</h4>
+                    <h4>🎯 Risk-Adjusted Returns</h4>
                     <p>
-                        The RL portfolio achieves a <strong>Sharpe ratio of {m['sharpe_ratio']:.2f}</strong> and
-                        <strong>Sortino ratio of {m['sortino_ratio']:.2f}</strong>, demonstrating that the
-                        differential Sharpe reward function effectively guides the agent toward
-                        maximizing return per unit of risk, particularly downside risk.
+                        The RL portfolio has a <strong>Sharpe ratio of {m['sharpe_ratio']:.2f}</strong>
+                        ({sharpe_word} the benchmark's {m['benchmark_sharpe']:.2f}) and a
+                        <strong>Sortino ratio of {m['sortino_ratio']:.2f}</strong> on a single
+                        out-of-sample period. One period and one training seed are not enough to
+                        claim a durable edge.
                     </p>
                 </div>
                 <div class="obs-card">
-                    <h4>📊 Effective Diversification</h4>
+                    <h4>📊 Market Exposure</h4>
                     <p>
-                        With a <strong>Beta of {m['beta']:.2f}</strong>, the portfolio captures ~{m['beta']*100:.0f}% of
-                        market movements while maintaining lower overall volatility
-                        ({m['annualized_volatility']*100:.1f}% annualized). The 10% max position constraint
-                        and 50-asset universe ensure well-diversified allocations.
+                        With a <strong>Beta of {m['beta']:.2f}</strong>, the portfolio moved roughly {m['beta']*100:.0f}% as much as
+                        the market, at {m['annualized_volatility']*100:.1f}% annualized volatility.
+                        The {config.MAX_POSITION_SIZE*100:.0f}% position cap and {config.N_ASSETS}-asset universe bound concentration.
                     </p>
                 </div>
                 <div class="obs-card warn">
                     <h4>⚡ Transaction Cost Impact</h4>
                     <p>
-                        The 0.25% transaction cost on portfolio turnover creates a realistic friction
-                        that discourages excessive rebalancing. The agent learns to make targeted,
-                        incremental allocation changes rather than large portfolio shifts,
-                        resulting in practical, implementable trading strategies.
+                        {turnover_line} Costs are deducted from every simulated return.
                     </p>
                 </div>
                 <div class="obs-card">
@@ -689,27 +703,25 @@ def generate_report():
                 <div class="obs-card">
                     <h4>🏗️ LSTM Temporal Modeling</h4>
                     <p>
-                        The 2-layer LSTM with 128 hidden units processes 60-day lookback windows
+                        The {config.LSTM_NUM_LAYERS}-layer LSTM with {config.LSTM_HIDDEN_SIZE} hidden units processes {config.LOOKBACK_WINDOW}-day lookback windows
                         of 5 features per asset (log returns, volatility, RSI, MACD, Bollinger %B),
-                        capturing temporal dependencies and regime changes that inform allocation decisions.
+                        and feeds the encoded history to the actor and critic heads.
                     </p>
                 </div>
                 <div class="obs-card warn">
-                    <h4>📈 Positive Alpha Generation</h4>
+                    <h4>📈 Alpha</h4>
                     <p>
-                        The strategy achieves positive <strong>Alpha of +{m['alpha']*100:.2f}%</strong>,
-                        indicating the RL agent generates returns beyond what would be expected from
-                        its market exposure alone. This confirms the PPO policy learns to
-                        identify mispricings and momentum patterns in the feature space.
+                        Measured <strong>alpha is {alpha_word} at {m['alpha']*100:.2f}%</strong> annualized versus the S&P 500.
+                        No significance test was run, so a value this close to zero should not be
+                        read as evidence of skill.
                     </p>
                 </div>
                 <div class="obs-card red">
                     <h4>⚠️ Concentration Constraints</h4>
                     <p>
-                        The 10% max position size and long-only constraints limit the agent's ability
-                        to aggressively overweight high-conviction positions (e.g., during the
-                        2023-2024 mega-cap tech rally). This is a deliberate risk management choice
-                        that trades maximum return for lower volatility and drawdown protection.
+                        The 10% max position size and long-only constraints limit how far the agent
+                        can overweight any single name. This is a deliberate risk-management choice
+                        that can cost return in concentrated rallies.
                     </p>
                 </div>
                 <div class="obs-card">
@@ -734,12 +746,12 @@ def generate_report():
                 <div class="arch-flow">
                     <div class="arch-node">
                         <div class="node-title">Market Features</div>
-                        <div class="node-desc">50 assets × 5 features<br>60-day lookback</div>
+                        <div class="node-desc">{config.N_ASSETS} assets × 5 features<br>{config.LOOKBACK_WINDOW}-day lookback</div>
                     </div>
                     <div class="arch-arrow">→</div>
                     <div class="arch-node">
                         <div class="node-title">LSTM Encoder</div>
-                        <div class="node-desc">2 layers, 128 hidden<br>LayerNorm</div>
+                        <div class="node-desc">{config.LSTM_NUM_LAYERS} layers, {config.LSTM_HIDDEN_SIZE} hidden<br>LayerNorm</div>
                     </div>
                     <div class="arch-arrow">→</div>
                     <div class="arch-node">
@@ -749,12 +761,12 @@ def generate_report():
                     <div class="arch-arrow">→</div>
                     <div class="arch-node">
                         <div class="node-title">Portfolio Env</div>
-                        <div class="node-desc">Sharpe Reward<br>0.25% Costs</div>
+                        <div class="node-desc">Sharpe Reward<br>{config.TRANSACTION_COST*100:.2f}% Costs</div>
                     </div>
                     <div class="arch-arrow">→</div>
                     <div class="arch-node">
                         <div class="node-title">PPO Update</div>
-                        <div class="node-desc">Clipped Objective<br>GAE λ=0.95</div>
+                        <div class="node-desc">Clipped Objective<br>GAE λ={config.GAE_LAMBDA}</div>
                     </div>
                 </div>
             </div>
@@ -767,28 +779,28 @@ def generate_report():
                 <h2>Training Configuration</h2>
             </div>
             <div class="config-grid">
-                <div class="config-item"><span class="key">Assets Universe</span><span class="val">50 equities</span></div>
-                <div class="config-item"><span class="key">Data Period</span><span class="val">2019–2024</span></div>
-                <div class="config-item"><span class="key">Train / Test Split</span><span class="val">70% / 30%</span></div>
-                <div class="config-item"><span class="key">Lookback Window</span><span class="val">60 days</span></div>
-                <div class="config-item"><span class="key">LSTM Hidden Size</span><span class="val">128</span></div>
-                <div class="config-item"><span class="key">LSTM Layers</span><span class="val">2</span></div>
-                <div class="config-item"><span class="key">Learning Rate</span><span class="val">1e-4</span></div>
-                <div class="config-item"><span class="key">PPO Clip</span><span class="val">0.2</span></div>
-                <div class="config-item"><span class="key">Gamma (Discount)</span><span class="val">0.99</span></div>
-                <div class="config-item"><span class="key">GAE Lambda</span><span class="val">0.95</span></div>
-                <div class="config-item"><span class="key">Transaction Cost</span><span class="val">0.25%</span></div>
-                <div class="config-item"><span class="key">Max Position Size</span><span class="val">10%</span></div>
-                <div class="config-item"><span class="key">Training Iterations</span><span class="val">150</span></div>
-                <div class="config-item"><span class="key">Trajectory Length</span><span class="val">200 days</span></div>
-                <div class="config-item"><span class="key">Model Parameters</span><span class="val">392,613</span></div>
-                <div class="config-item"><span class="key">Entropy Coefficient</span><span class="val">0.005</span></div>
+                <div class="config-item"><span class="key">Assets Universe</span><span class="val">{config.N_ASSETS} equities</span></div>
+                <div class="config-item"><span class="key">Data Period</span><span class="val">{config.START_DATE[:4]}–{config.END_DATE[:4]}</span></div>
+                <div class="config-item"><span class="key">Train / Test Split</span><span class="val">{config.TRAIN_RATIO:.0%} / {1-config.TRAIN_RATIO:.0%}</span></div>
+                <div class="config-item"><span class="key">Lookback Window</span><span class="val">{config.LOOKBACK_WINDOW} days</span></div>
+                <div class="config-item"><span class="key">LSTM Hidden Size</span><span class="val">{config.LSTM_HIDDEN_SIZE}</span></div>
+                <div class="config-item"><span class="key">LSTM Layers</span><span class="val">{config.LSTM_NUM_LAYERS}</span></div>
+                <div class="config-item"><span class="key">Learning Rate</span><span class="val">{config.LEARNING_RATE:g}</span></div>
+                <div class="config-item"><span class="key">PPO Clip</span><span class="val">{config.PPO_CLIP}</span></div>
+                <div class="config-item"><span class="key">Gamma (Discount)</span><span class="val">{config.GAMMA}</span></div>
+                <div class="config-item"><span class="key">GAE Lambda</span><span class="val">{config.GAE_LAMBDA}</span></div>
+                <div class="config-item"><span class="key">Transaction Cost</span><span class="val">{config.TRANSACTION_COST*100:.2f}%</span></div>
+                <div class="config-item"><span class="key">Max Position Size</span><span class="val">{config.MAX_POSITION_SIZE*100:.0f}%</span></div>
+                <div class="config-item"><span class="key">Training Iterations</span><span class="val">{config.NUM_TRAINING_ITERATIONS}</span></div>
+                <div class="config-item"><span class="key">Trajectory Length</span><span class="val">{config.TRAJECTORY_LENGTH} days</span></div>
+                <div class="config-item"><span class="key">Model Parameters</span><span class="val">{n_params:,}</span></div>
+                <div class="config-item"><span class="key">Entropy Coefficient</span><span class="val">{config.ENTROPY_COEF}</span></div>
             </div>
         </div>
 
         <!-- ═══ FOOTER ═══ -->
         <div class="footer">
-            <p>Deep RL Portfolio Optimization &nbsp;•&nbsp; LSTM-PPO &nbsp;•&nbsp; Generated March 2025</p>
+            <p>Deep RL Portfolio Optimization &nbsp;•&nbsp; LSTM-PPO &nbsp;•&nbsp; Generated {generated}</p>
             <p style="margin-top: 8px; color: var(--text-muted);">
                 Built with Python, PyTorch, Pandas, NumPy &nbsp;|&nbsp; {m['n_trading_days']} out-of-sample trading days
             </p>

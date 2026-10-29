@@ -7,6 +7,36 @@ import numpy as np
 import config
 
 
+def apply_position_cap(weights: np.ndarray, cap: float) -> np.ndarray:
+    """
+    Project weights onto {w >= 0, sum(w) = 1, w <= cap}.
+    Excess above the cap is redistributed to uncapped assets in proportion to their weight.
+    """
+    n = len(weights)
+    if cap * n < 1.0 - 1e-9:
+        raise ValueError(f"Infeasible: {n} assets with max position {cap} cannot sum to 1")
+
+    w = np.nan_to_num(np.asarray(weights, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+    w = np.clip(w, 0.0, None)
+    if w.sum() <= 0:
+        return np.ones(n) / n
+    w = w / w.sum()
+
+    for _ in range(n):
+        over = w > cap + 1e-12
+        if not over.any():
+            break
+        excess = (w[over] - cap).sum()
+        w[over] = cap
+        free = w < cap - 1e-12
+        free_sum = w[free].sum()
+        if free_sum > 0:
+            w[free] += excess * w[free] / free_sum
+        else:
+            w[free] += excess / free.sum()
+    return w
+
+
 class PortfolioEnv:
     """
     A portfolio environment for RL-based trading.
@@ -40,6 +70,10 @@ class PortfolioEnv:
         if start_idx is not None:
             self.t = start_idx
         elif self.is_train:
+            if self.n_days <= self.lookback + 1:
+                raise ValueError(
+                    f"Need more than {self.lookback + 1} days of data, got {self.n_days}"
+                )
             max_start = self.n_days - config.TRAJECTORY_LENGTH - 1
             max_start = max(self.lookback, max_start)
             self.t = np.random.randint(self.lookback, max_start + 1)
@@ -63,17 +97,12 @@ class PortfolioEnv:
         return window_flat, self.weights.copy()
 
     def _apply_constraints(self, target_weights: np.ndarray) -> np.ndarray:
-        w = np.clip(target_weights, 0.0, config.MAX_POSITION_SIZE)
-        w_sum = w.sum()
-        if w_sum > 0:
-            w = w / w_sum
-        else:
-            w = np.ones(self.n_assets) / self.n_assets
-        w = np.clip(w, 0.0, config.MAX_POSITION_SIZE)
-        w = w / (w.sum() + 1e-8)
-        return w
+        return apply_position_cap(target_weights, config.MAX_POSITION_SIZE)
 
     def step(self, action: np.ndarray):
+        if self.done:
+            raise RuntimeError("step() called on a finished episode; call reset() first")
+
         target_weights = self._apply_constraints(action)
 
         # Transaction costs
@@ -91,11 +120,15 @@ class PortfolioEnv:
 
         reward = self._compute_reward(port_return)
 
-        if self.is_train:
-            steps_taken = len(self.portfolio_returns)
-            self.done = (self.t >= self.n_days - 1) or (steps_taken >= config.TRAJECTORY_LENGTH)
-        else:
-            self.done = (self.t >= self.n_days - 1)
+        # terminated: ran out of data. truncated: hit the trajectory time limit (the
+        # episode did not really end, so the learner should bootstrap from the value estimate).
+        terminated = self.t >= self.n_days - 1
+        truncated = (
+            self.is_train
+            and not terminated
+            and len(self.portfolio_returns) >= config.TRAJECTORY_LENGTH
+        )
+        self.done = terminated or truncated
 
         obs = self._get_obs()
 
@@ -104,6 +137,8 @@ class PortfolioEnv:
             "portfolio_return": port_return,
             "turnover": turnover,
             "transaction_cost": transaction_cost,
+            "terminated": terminated,
+            "truncated": truncated,
         }
 
         return obs, reward, self.done, info
@@ -139,7 +174,7 @@ class PortfolioEnv:
         total_return = self.portfolio_value - 1.0
         n_days = len(returns)
         ann_factor = 252 / max(n_days, 1)
-        ann_return = (1 + total_return) ** ann_factor - 1
+        ann_return = max(1 + total_return, 0.0) ** ann_factor - 1
 
         daily_rf = config.RISK_FREE_RATE / 252
         excess = returns - daily_rf

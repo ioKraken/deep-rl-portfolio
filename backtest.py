@@ -64,6 +64,7 @@ def run_backtest(agent: PPOAgent, test_features: np.ndarray, test_prices: np.nda
     # Compute metrics
     metrics = compute_metrics(daily_returns, portfolio_values, bench_returns, bench_values)
     metrics["turnovers"] = turnovers
+    metrics["avg_daily_turnover"] = float(np.mean(turnovers)) if turnovers else 0.0
 
     return {
         "portfolio_values": portfolio_values,
@@ -82,16 +83,16 @@ def compute_metrics(daily_returns, portfolio_values, bench_returns, bench_values
 
     # Portfolio metrics
     total_return = portfolio_values[-1] / portfolio_values[0] - 1
-    ann_return = (1 + total_return) ** ann_factor - 1
+    ann_return = max(1 + total_return, 0.0) ** ann_factor - 1
 
     daily_rf = config.RISK_FREE_RATE / 252
     excess = daily_returns - daily_rf
     sharpe = np.mean(excess) / (np.std(excess) + 1e-8) * np.sqrt(252)
 
-    # Sortino (downside deviation)
-    downside = excess[excess < 0]
-    downside_std = np.std(downside) + 1e-8 if len(downside) > 0 else 1e-8
-    sortino = np.mean(excess) / downside_std * np.sqrt(252)
+    # Sortino: downside deviation is the root-mean-square of the negative excess returns
+    # taken over ALL observations (non-negative days contribute zero).
+    downside_dev = np.sqrt(np.mean(np.minimum(excess, 0.0) ** 2)) + 1e-8
+    sortino = np.mean(excess) / downside_dev * np.sqrt(252)
 
     # Max drawdown
     peak = np.maximum.accumulate(portfolio_values)
@@ -109,7 +110,7 @@ def compute_metrics(daily_returns, portfolio_values, bench_returns, bench_values
 
     # Benchmark metrics
     bench_total = bench_values[-1] / bench_values[0] - 1
-    bench_ann = (1 + bench_total) ** ann_factor - 1
+    bench_ann = max(1 + bench_total, 0.0) ** ann_factor - 1
     bench_excess = bench_returns - daily_rf
     bench_sharpe = np.mean(bench_excess) / (np.std(bench_excess) + 1e-8) * np.sqrt(252)
     bench_peak = np.maximum.accumulate(bench_values)
@@ -247,7 +248,7 @@ def generate_plots(backtest_result: dict, save_dir: str):
     top_tickers = [config.TICKERS[i] for i in top_idx]
     top_weights = wh[:, top_idx]
 
-    cmap = plt.cm.get_cmap("tab20", len(top_idx))
+    cmap = matplotlib.colormaps["tab20"].resampled(len(top_idx))
     ax.stackplot(range(len(top_weights)), top_weights.T,
                  labels=top_tickers,
                  colors=[cmap(i) for i in range(len(top_idx))],
@@ -280,21 +281,20 @@ def generate_plots(backtest_result: dict, save_dir: str):
             monthly_ret = np.prod(1 + dr[s:e]) - 1
             monthly_returns.append(monthly_ret * 100)
 
-        # Reshape into approximate year x month grid
-        n_years = max(1, n_months // 12)
+        # Reshape into a year x month grid of consecutive 21-trading-day periods.
+        # Padding is NaN so unfilled cells are left blank instead of showing a fake 0.0.
         n_cols = 12
         n_rows = (n_months + n_cols - 1) // n_cols
-        padded = monthly_returns + [0] * (n_rows * n_cols - len(monthly_returns))
+        padded = monthly_returns + [np.nan] * (n_rows * n_cols - len(monthly_returns))
         grid = np.array(padded).reshape(n_rows, n_cols)
 
-        month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-
         sns.heatmap(grid, annot=True, fmt=".1f", cmap="RdYlGn", center=0,
-                    xticklabels=month_labels[:n_cols], yticklabels=[f"Y{i+1}" for i in range(n_rows)],
+                    mask=np.isnan(grid),
+                    xticklabels=[f"M{i+1}" for i in range(n_cols)],
+                    yticklabels=[f"Y{i+1}" for i in range(n_rows)],
                     ax=ax, cbar_kws={"label": "Return (%)"})
 
-        ax.set_title("Monthly Returns Heatmap (%)", fontsize=16, color=colors["text"], fontweight="bold")
+        ax.set_title("Returns per 21-Trading-Day Period (%)", fontsize=16, color=colors["text"], fontweight="bold")
         ax.tick_params(colors=colors["text"])
 
     plt.tight_layout()
@@ -307,7 +307,7 @@ def generate_plots(backtest_result: dict, save_dir: str):
     ax.set_facecolor(colors["bg"])
     ax.axis("off")
 
-    title = "📊 DEEP RL PORTFOLIO — PERFORMANCE REPORT"
+    title = "DEEP RL PORTFOLIO - PERFORMANCE REPORT"
     ax.text(0.5, 0.95, title, fontsize=20, fontweight="bold", color=colors["portfolio"],
             ha="center", va="top", transform=ax.transAxes)
 
@@ -365,7 +365,7 @@ def save_metrics(metrics: dict, save_dir: str):
 def print_results(metrics: dict):
     """Print a formatted results table to console."""
     print("\n" + "=" * 72)
-    print("  📊 DEEP RL PORTFOLIO OPTIMIZATION — BACKTEST RESULTS")
+    print("  DEEP RL PORTFOLIO OPTIMIZATION — BACKTEST RESULTS")
     print("=" * 72)
     print(f"  {'Metric':<30} {'RL Portfolio':>18} {'S&P 500':>18}")
     print(f"  {'─'*30} {'─'*18} {'─'*18}")

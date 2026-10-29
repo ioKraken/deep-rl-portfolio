@@ -26,15 +26,18 @@ TICKERS = [
 
 BENCHMARK_TICKER = "SPY"
 N_ASSETS = len(TICKERS)
+N_FEATURES = 5  # log return, volatility, RSI, MACD histogram, Bollinger %B
 
 # Date Ranges 
 START_DATE = "2019-01-01"
 END_DATE = "2024-12-31"
 TRAIN_RATIO = 0.70  # 70% train, 30% test
+VAL_RATIO = 0.20    # Last 20% of the train split is held out for model selection
 
 # Feature Engineering
 LOOKBACK_WINDOW = 60        # Days of history the LSTM sees
 ROLLING_VOL_WINDOW = 20     # For rolling volatility
+FEATURE_CLIP = 5.0          # Normalized features are clipped to +/- this value
 RSI_WINDOW = 14
 MACD_FAST = 12
 MACD_SLOW = 26
@@ -51,7 +54,7 @@ RISK_FREE_RATE = 0.04       # Annual risk-free rate (≈ recent T-bill)
 # Network Architecture
 LSTM_HIDDEN_SIZE = 128
 LSTM_NUM_LAYERS = 2
-LSTM_DROPOUT = 0.1
+LSTM_DROPOUT = 0.0          # Must stay 0: rollout and update passes would otherwise use different dropout masks
 
 # PPO Hyperparameters
 LEARNING_RATE = 1e-4
@@ -67,8 +70,11 @@ TRAJECTORY_LENGTH = 200     # ~10 months trading days per trajectory
 
 #  Training
 NUM_TRAINING_ITERATIONS = 150  # Number of training iterations
+VAL_EVAL_EVERY = 5             # Validate (and maybe checkpoint) every N iterations
 SEED = 42
 
-# Ensure directories exist
-os.makedirs(RESULTS_DIR, exist_ok=True)
-os.makedirs(MODEL_DIR, exist_ok=True)
+
+def ensure_dirs():
+    """Create output directories. Called by the code that writes to them, not at import time."""
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    os.makedirs(MODEL_DIR, exist_ok=True)

@@ -1,3 +1,4 @@
+import argparse
 import sys
 import os
 import time
@@ -13,9 +14,17 @@ import config
 from data_pipeline import prepare_data
 from train import train
 from backtest import run_backtest, generate_plots, save_metrics, print_results
+from generate_report import generate_report
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Train, backtest and report the PPO portfolio agent")
+    parser.add_argument("--iterations", type=int, default=None,
+                        help=f"Training iterations (default: {config.NUM_TRAINING_ITERATIONS})")
+    args = parser.parse_args(argv)
+    if args.iterations is not None:
+        config.NUM_TRAINING_ITERATIONS = args.iterations
+
     print("=" * 72)
     print("   DEEP RL PORTFOLIO OPTIMIZATION")
     print("  LSTM-PPO | 50 Equities | Sharpe Ratio Objective")
@@ -61,6 +70,7 @@ def main():
     print("━" * 72)
     generate_plots(backtest_result, config.RESULTS_DIR)
     save_metrics(backtest_result["metrics"], config.RESULTS_DIR)
+    generate_report()
 
     total_time = time.time() - overall_start
     print(f"\n Pipeline complete in {total_time:.1f}s")
@@ -73,6 +83,7 @@ def main():
     print(f"   • performance_summary.png")
     print(f"   • training_progress.png")
     print(f"   • metrics.json")
+    print(f" Report: {os.path.join(config.PROJECT_DIR, 'results_report.html')}")
     print()
 
 

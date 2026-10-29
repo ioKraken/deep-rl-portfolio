@@ -2,6 +2,8 @@
 Data Pipeline: Download stock data, compute technical features, normalize, and split.
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -12,25 +14,45 @@ from ta.volatility import BollingerBands
 import config
 
 
-def download_data() -> pd.DataFrame:
+def download_data(start: str = None, end: str = None) -> pd.DataFrame:
     """Download adjusted close prices for all tickers + benchmark."""
+    start = start or config.START_DATE
+    end = end or config.END_DATE
     all_tickers = config.TICKERS + [config.BENCHMARK_TICKER]
-    print(f"[Data] Downloading {len(all_tickers)} tickers from {config.START_DATE} to {config.END_DATE} ...")
+    print(f"[Data] Downloading {len(all_tickers)} tickers from {start} to {end} ...")
     data = yf.download(
         all_tickers,
-        start=config.START_DATE,
-        end=config.END_DATE,
+        start=start,
+        end=end,
         auto_adjust=True,
         progress=False,
     )
+    if data is None or data.empty:
+        raise RuntimeError("yfinance returned no data (network problem or rate limit?)")
+
     # yfinance returns MultiIndex columns: (Price, Ticker)
     prices = data["Close"] if "Close" in data.columns.get_level_values(0) else data
-    prices = prices.ffill().dropna()
+    return clean_prices(prices)
+
+
+def clean_prices(prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Validate and clean a raw price table. A ticker with no data at all must be an error:
+    left in, it would make dropna() silently wipe out every row.
+    """
+    required = config.TICKERS + [config.BENCHMARK_TICKER]
+    missing = [t for t in required if t not in prices.columns or prices[t].isna().all()]
+    if missing:
+        raise RuntimeError(f"No price data returned for: {', '.join(missing)}")
+
+    prices = prices[required].ffill().dropna()
+    if prices.empty:
+        raise RuntimeError("No overlapping trading days across all tickers")
     print(f"[Data] Downloaded {len(prices)} trading days, {prices.shape[1]} tickers")
     return prices
 
 
-def compute_features(prices: pd.DataFrame) -> np.ndarray:
+def compute_features(prices: pd.DataFrame) -> tuple:
     """
     For each asset compute features:
       - Log returns
@@ -38,10 +60,10 @@ def compute_features(prices: pd.DataFrame) -> np.ndarray:
       - RSI
       - MACD histogram
       - Bollinger %B
-    Returns array of shape (n_days, n_assets, n_features)
+    Returns (features, n_features) where features has shape (n_days, n_assets, n_features)
     """
     asset_tickers = config.TICKERS
-    n_features = 5
+    n_features = config.N_FEATURES
     n_days = len(prices)
     n_assets = len(asset_tickers)
 
@@ -49,8 +71,7 @@ def compute_features(prices: pd.DataFrame) -> np.ndarray:
 
     for i, ticker in enumerate(asset_tickers):
         if ticker not in prices.columns:
-            print(f"  [Warning] {ticker} not in data, skipping")
-            continue
+            raise KeyError(f"{ticker} missing from price data")
 
         close = prices[ticker]
 
@@ -90,19 +111,25 @@ def compute_features(prices: pd.DataFrame) -> np.ndarray:
 
 
 def normalize_features(features: np.ndarray, lookback: int) -> np.ndarray:
-    """Rolling z-score normalization along the time axis."""
+    """
+    Rolling z-score normalization along the time axis. Statistics for day t come from
+    the `lookback` days before it, so no future data leaks in. The first `lookback` rows
+    are left at zero and should be discarded.
+    """
     n_days, n_assets, n_feat = features.shape
     normalized = np.zeros_like(features)
 
     for t in range(lookback, n_days):
         window = features[t - lookback : t]
-        mean = np.nanmean(window, axis=0)
-        std = np.nanstd(window, axis=0) + 1e-8
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN slices during indicator warm-up
+            mean = np.nanmean(window, axis=0)
+            std = np.nanstd(window, axis=0) + 1e-8
         normalized[t] = (features[t] - mean) / std
 
-    # Replace any remaining NaN/inf
+    # Replace any remaining NaN/inf, then bound outliers from near-zero-variance windows
     normalized = np.nan_to_num(normalized, nan=0.0, posinf=0.0, neginf=0.0)
-    return normalized
+    return np.clip(normalized, -config.FEATURE_CLIP, config.FEATURE_CLIP)
 
 
 def prepare_data():

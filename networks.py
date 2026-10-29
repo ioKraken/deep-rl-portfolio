@@ -106,13 +106,16 @@ class ActorCritic(nn.Module):
         self.critic = CriticHead(config.LSTM_HIDDEN_SIZE, n_assets)
         self.n_assets = n_assets
 
-        # Initialize weights
+        # Initialize weights. Hidden layers use gain sqrt(2); the output layers are
+        # scaled separately so the initial policy is near-uniform and values start near 0.
         self.apply(self._init_weights)
+        nn.init.orthogonal_(self.actor.mean_net[-1].weight, gain=0.01)
+        nn.init.orthogonal_(self.critic.net[-1].weight, gain=1.0)
 
     @staticmethod
     def _init_weights(module):
         if isinstance(module, nn.Linear):
-            nn.init.orthogonal_(module.weight, gain=0.01)
+            nn.init.orthogonal_(module.weight, gain=np.sqrt(2))
             if module.bias is not None:
                 nn.init.constant_(module.bias, 0)
         elif isinstance(module, nn.LSTM):

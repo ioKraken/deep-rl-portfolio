@@ -29,3 +29,7 @@ __MACOSX/
 .vscode/
 .idea/
 *.swp
+
+# Local
+.pytest_cache/
+.venv/
